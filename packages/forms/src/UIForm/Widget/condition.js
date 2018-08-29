@@ -1,18 +1,81 @@
 import get from 'lodash/get';
-import includes from 'lodash/includes';
+import findIndex from 'lodash/findIndex';
 
-function getValue(value, strategy) {
-	if (!strategy) {
+function toNumber(value) {
+	if (typeof value === 'string') {
+		return Number(value);
+	}
+	return value;
+}
+
+function toString(value) {
+	if (!value) {
 		return value;
 	}
-	switch (strategy.toLowerCase()) {
+	if (typeof value === 'number') {
+		return JSON.stringify(value);
+	}
+	if (value.toString) {
+		return value.toString();
+	}
+	return value;
+}
+
+function parseStrategy(strategy) {
+	if (!strategy) {
+		return undefined;
+	}
+
+	const start = strategy.indexOf('(');
+	if (start > 0) {
+		const end = strategy.indexOf(')', start);
+		if (end > 0) {
+			const params = strategy.substring(start + 1, end).split(';')
+				.map(it => {
+					const sep = it.indexOf('=');
+					if (sep > 0) {
+						return {
+							[it.substring(0, sep).trim()]: it.substring(sep + 1, it.length).trim(),
+						};
+					}
+					return {
+						value: it.trim(),
+					};
+				})
+				.reduce((a, v) => ({
+					...a,
+					...v,
+				}), {});
+			return {
+				name: strategy.substring(0, start).toLowerCase(),
+				params,
+			};
+		}
+	}
+	return {
+		name: strategy.toLowerCase(),
+		params: {},
+	};
+}
+
+function toEvaluator(value, strategyConfig) {
+	switch (strategyConfig.name) {
 		case 'length':
 			if (value && value.length) {
-				return value.length;
+				const length = value.length;
+				return expected => length === toNumber(expected);
 			}
-			return 0;
+			return expected => expected === 0 || expected === '0';
+		case 'contains':
+			if (!value) {
+				return () => false;
+			}
+			if (strategyConfig.params.lowercase === 'true') { // allows case insensitve comparison
+				return expected => value && toString(value).toLowerCase().indexOf(expected) >= 0;
+			}
+			return expected => value && toString(value).indexOf(expected) >= 0;
 		default:
-			return false;
+			return () => value;
 	}
 }
 
@@ -21,9 +84,15 @@ function evaluateInlineCondition(properties, condition) {
 		return true;
 	}
 
+	const strategyConfig = parseStrategy(condition.strategy);
 	const value = get(properties, condition.path);
-	const actual = getValue(value, condition.strategy);
-	return (condition.shouldBe !== false) === includes(condition.values, actual);
+	let evaluator;
+	if (strategyConfig) {
+		evaluator = toEvaluator(value, strategyConfig);
+	} else {
+		evaluator = expected => value === expected || (value && toString(value) === expected);
+	}
+	return (condition.shouldBe !== false) === (findIndex(condition.values, evaluator) >= 0);
 }
 
 function evaluateChildrenCondition(properties, condition) {
