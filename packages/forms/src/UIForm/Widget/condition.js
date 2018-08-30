@@ -1,7 +1,7 @@
 import get from 'lodash/get';
 import findIndex from 'lodash/findIndex';
 
-function toNumber(value) {
+function stringOrNumberToNumber(value) {
 	if (typeof value === 'number') {
 		return value;
 	}
@@ -12,7 +12,10 @@ function toNumber(value) {
 	throw error;
 }
 
-function toString(value) {
+function stringOrNumberToString(value, onError = val => {
+	const error = { error: 'the passed value is not a string or a number', value: val };
+	throw error;
+}) {
 	if (!value) {
 		return value;
 	}
@@ -22,38 +25,47 @@ function toString(value) {
 	if (typeof value === 'string') {
 		return value.toString();
 	}
-	const error = { error: 'the passed value is not a string or a number', value };
-	throw error;
+	return onError(value);
 }
 
+/**
+ * "foo=bar;dummy=1" will return [{foo:"bar",dummy:"1"}]
+ */
+function parseParameters(parameterString) {
+	return parameterString.split(';')
+		.map(it => {
+			const sep = it.indexOf('=');
+			if (sep > 0) {
+				return {
+					[it.substring(0, sep).trim()]: it.substring(sep + 1, it.length).trim(),
+				};
+			}
+			return {
+				value: it.trim(),
+			};
+		})
+		.reduce((a, v) => ({
+			...a,
+			...v,
+		}), {});
+}
+
+/**
+ * parses a strategy based on this pattern "name(parameters)" and returns
+ * an object containing { name, params }.
+ */
 function parseStrategy(strategy) {
 	if (!strategy) {
-		return undefined;
+		return strategy;
 	}
 
 	const start = strategy.indexOf('(');
 	if (start > 0) {
 		const end = strategy.indexOf(')', start);
 		if (end > 0) {
-			const params = strategy.substring(start + 1, end).split(';')
-				.map(it => {
-					const sep = it.indexOf('=');
-					if (sep > 0) {
-						return {
-							[it.substring(0, sep).trim()]: it.substring(sep + 1, it.length).trim(),
-						};
-					}
-					return {
-						value: it.trim(),
-					};
-				})
-				.reduce((a, v) => ({
-					...a,
-					...v,
-				}), {});
 			return {
 				name: strategy.substring(0, start).toLowerCase(),
-				params,
+				params: parseParameters(strategy.substring(start + 1, end)),
 			};
 		}
 	}
@@ -63,24 +75,74 @@ function parseStrategy(strategy) {
 	};
 }
 
+function areEqualsAsNumbers(expected, actualStringOrNumber) {
+	return expected === stringOrNumberToNumber(actualStringOrNumber);
+}
+
+function containsString(expected, actualStringOrNumber, valueProcessor = v => v) {
+	return actualStringOrNumber &&
+		valueProcessor(stringOrNumberToString(actualStringOrNumber)).includes(expected);
+}
+
+// this will not fail in case actualStringOrNumber is not a string or number
+// but will return false sinc eit is used as a fallback comparison using coercing
+function areEqualsAsString(expected, actualStringOrNumber) {
+	return actualStringOrNumber && stringOrNumberToString(actualStringOrNumber, v => v) === expected;
+}
+
+/**
+ * For an array or a string if compares the expected value to its length.
+ */
+function toLengthEvaluator(value) {
+	if (value && value.length) {
+		const length = value.length;
+		return expected => areEqualsAsNumbers(length, expected);
+	}
+	return expected => areEqualsAsNumbers(0, expected);
+}
+
+/**
+ * If an array it checks if the expected element is present in the array.
+ * If a string it checks the expected token is present in the string.
+ *
+ * It accepts the <code>lowercase</code> option to do a test using the
+ * lowercased value of the actual value.
+ */
+function toContainsEvaluator(actual, options) {
+	if (!actual) {
+		return () => false;
+	}
+	if (Array.isArray(actual)) {
+		if (options.lowercase === 'true') {
+			return expected => actual.map(it => it.toLowerCase()).indexOf(expected) >= 0;
+		}
+		return expected => actual.indexOf(expected) >= 0;
+	}
+	if (options.lowercase === 'true') { // allows case insensitve comparison
+		return expected => containsString(expected, actual, v => v.toLowerCase());
+	}
+	return expected => containsString(expected, actual);
+}
+
+/**
+ * compare actual value to the expected one thanks to === operator
+ * or tries a string comparison if possible.
+ */
+function toDefaultEvaluator(value) {
+	return expected => value === expected || areEqualsAsString(expected, value);
+}
+
+/**
+ * builds an evaluator (function) for the corresponding strategy.
+ */
 function toEvaluator(value, strategyConfig) {
 	switch (strategyConfig.name) {
 		case 'length':
-			if (value && value.length) {
-				const length = value.length;
-				return expected => length === toNumber(expected);
-			}
-			return expected => expected === 0 || expected === '0';
+			return toLengthEvaluator(value);
 		case 'contains':
-			if (!value) {
-				return () => false;
-			}
-			if (strategyConfig.params.lowercase === 'true') { // allows case insensitve comparison
-				return expected => value && toString(value).toLowerCase().includes(expected);
-			}
-			return expected => value && toString(value).includes(expected);
+			return toContainsEvaluator(value, strategyConfig.params);
 		default:
-			return () => value;
+			return toDefaultEvaluator(value);
 	}
 }
 
@@ -89,14 +151,9 @@ function evaluateInlineCondition(properties, condition) {
 		return true;
 	}
 
-	const strategyConfig = parseStrategy(condition.strategy);
+	const strategyConfig = parseStrategy(condition.strategy) || { name: 'default' };
 	const value = get(properties, condition.path);
-	let evaluator;
-	if (strategyConfig) {
-		evaluator = toEvaluator(value, strategyConfig);
-	} else {
-		evaluator = expected => value === expected || (value && toString(value) === expected);
-	}
+	const evaluator = toEvaluator(value, strategyConfig);
 	return (condition.shouldBe !== false) === (findIndex(condition.values, evaluator) >= 0);
 }
 

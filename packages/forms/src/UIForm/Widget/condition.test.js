@@ -113,6 +113,11 @@ const TRUTHY_CONDITIONS = [
 		path: 'string',
 	},
 	{
+		values: ['foo'],
+		strategy: 'contains',
+		path: 'arrayString',
+	},
+	{
 		values: ['oo'],
 		strategy: 'contains(lowercase=true)',
 		path: 'stringUppercase',
@@ -190,6 +195,11 @@ const FALSY_CONDITIONS = [
 		values: [0],
 		strategy: 'contains',
 		path: 'string',
+	},
+	{
+		values: ['nothere'],
+		strategy: 'contains',
+		path: 'arrayString',
 	},
 ];
 
