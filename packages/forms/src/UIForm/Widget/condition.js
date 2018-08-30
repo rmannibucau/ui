@@ -2,10 +2,14 @@ import get from 'lodash/get';
 import findIndex from 'lodash/findIndex';
 
 function toNumber(value) {
+	if (typeof value === 'number') {
+		return value;
+	}
 	if (typeof value === 'string') {
 		return Number(value);
 	}
-	return value;
+	const error = { error: 'the passed value is not a string or a number', value };
+	throw error;
 }
 
 function toString(value) {
@@ -15,10 +19,11 @@ function toString(value) {
 	if (typeof value === 'number') {
 		return JSON.stringify(value);
 	}
-	if (value.toString) {
+	if (typeof value === 'string') {
 		return value.toString();
 	}
-	return value;
+	const error = { error: 'the passed value is not a string or a number', value };
+	throw error;
 }
 
 function parseStrategy(strategy) {
@@ -71,9 +76,9 @@ function toEvaluator(value, strategyConfig) {
 				return () => false;
 			}
 			if (strategyConfig.params.lowercase === 'true') { // allows case insensitve comparison
-				return expected => value && toString(value).toLowerCase().indexOf(expected) >= 0;
+				return expected => value && toString(value).toLowerCase().includes(expected);
 			}
-			return expected => value && toString(value).indexOf(expected) >= 0;
+			return expected => value && toString(value).includes(expected);
 		default:
 			return () => value;
 	}
